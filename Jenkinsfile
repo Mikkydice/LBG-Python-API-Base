@@ -3,48 +3,102 @@ pipeline {
     stages {
         stage('Init') {
             steps {
-                sh '''
-                ssh -i ~/.ssh/id_rsa jenkins@10.200.0.7 << EOF
-                docker stop flask-app || echo "flask-app Not Running"
-                docker rm flask-app || echo "flask-app Not Running"
-                
-                '''
+                script {
+			        if (env.GIT_BRANCH == 'origin/main') {
+                        sh '''
+                        kubectl create ns prod || echo "------- Prod Namespace Already Exists -------"
+                        '''
+                    } else if (env.GIT_BRANCH == 'origin/dev') {
+                        sh '''
+                        kubectl create ns dev || echo "------- Dev Namespace Already Exists -------"
+                        '''
+                    } else {
+                        sh '''
+                        echo "Unrecognised branch"
+                        '''
+                    }
+		        }
            }
         }
-
         stage('Build') {
             steps {
-                sh '''
-                docker build -t mikkydice/python-api -t mikkydice/python-api:v${BUILD_NUMBER} .
-                
-                '''
+                script {
+			        if (env.GIT_BRANCH == 'origin/main') {
+                        sh '''
+                        docker build -t gcr.io/lbg-mea-16/destiny-project-flask-api -t gcr.io/lbg-mea-16/destiny-project-flask-api:prod-v${BUILD_NUMBER} . 
+                        '''
+                    } else if (env.GIT_BRANCH == 'origin/dev') {
+                        sh '''
+                        docker build -t gcr.io/lbg-mea-16/destiny-project-flask-api -t gcr.io/lbg-mea-16/destiny-project-flask-api:dev-v${BUILD_NUMBER} .         
+                        '''
+                    } else {
+                        sh '''
+                        echo "Unrecognised branch"
+                        '''
+                    }
+		        }
            }
         }
-
         stage('Push') {
             steps {
-                sh '''
-                docker push mikkydice/python-api
-                docker push mikkydice/python-api:v${BUILD_NUMBER}
-                '''
+                script {
+			        if (env.GIT_BRANCH == 'origin/main') {
+                        sh '''
+                        docker push gcr.io/lbg-mea-16/destiny-project-flask-api
+                        docker push gcr.io/lbg-mea-16/destiny-project-flask-api:prod-v${BUILD_NUMBER}
+                        '''
+                    } else if (env.GIT_BRANCH == 'origin/dev') {
+                        sh '''
+                        docker push gcr.io/lbg-mea-16/destiny-project-flask-api
+                        docker push gcr.io/lbg-mea-16/destiny-project-flask-api:dev-v${BUILD_NUMBER}
+                        '''
+                    } else {
+                        sh '''
+                        echo "Unrecognised branch"
+                        '''
+                    }
+		        }
            }
         }
-
         stage('Deploy') {
             steps {
-                sh '''
-                ssh -i ~/.ssh/id_rsa jenkins@10.200.0.7 << EOF 
-                docker run -d -p 80:8080 --name flask-app mikkydice/python-api 
-                '''
-           }
+                script {
+			        if (env.GIT_BRANCH == 'origin/main') {
+                        sh '''
+                        kubectl apply -n prod -f ./kubernetes
+                        kubectl set image deployment/flask-api-deployment flask-container=gcr.io/lbg-mea-16/destiny-project-flask-api:prod-v${BUILD_NUMBER} -n prod
+                        '''
+                    } else if (env.GIT_BRANCH == 'origin/dev') {
+                        sh '''
+                        kubectl apply -n dev -f ./kubernetes
+                        kubectl set image deployment/flask-api-deployment flask-container=gcr.io/lbg-mea-16/destiny-project-flask-api:dev-v${BUILD_NUMBER} -n dev
+                        '''
+                    } else {
+                        sh '''
+                        echo "Unrecognised branch"
+                        '''
+                    }
+		        }
+            }
         }
         stage('Cleanup') {
             steps {
+                script {
+                    if (env.GIT_BRANCH == 'origin/main') {
+                        sh '''
+                        docker rmi gcr.io/lbg-mea-16/destiny-project-flask-api:prod-v${BUILD_NUMBER}
+                        '''
+                    } else if (env.GIT_BRANCH == 'origin/dev') {
+                        sh '''
+                        docker rmi gcr.io/lbg-mea-16/destiny-project-flask-api:dev-v${BUILD_NUMBER}
+                        '''
+                    }
+                }
                 sh '''
-                docker system prune -f
-                
+                docker rmi gcr.io/lbg-mea-16/destiny-project-flask-api:latest
+                docker system prune -f 
                 '''
-            }
+           }
         }
     }
 }
